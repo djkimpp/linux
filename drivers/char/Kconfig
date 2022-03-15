@@ -451,4 +451,10 @@ config RANDOM_TRUST_BOOTLOADER
 	pool. Otherwise, say N here so it will be regarded as device input that
 	only mixes the entropy pool.
 
+config MYMODULE
+	tristate "practice mymodule"
+	default n
+	help
+	  MYMODULE help message
+
 endmenu
