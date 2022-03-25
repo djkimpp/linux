@@ -4,43 +4,108 @@
 #include <linux/syscalls.h>
 #include <linux/kobject.h>
 #include <linux/string.h>
+#include <linux/vmalloc.h>
+#include <linux/uaccess.h>
 
-static int foo;
+#define MAX_BUF_SIZE 10485760 // 10MB
 
-/*
- * The "foo" file where a static variable is read from and written to.
- */
+static char *shmem_buf;
+size_t buf_size;
+  
 static ssize_t foo_show(struct kobject *kobj, struct kobj_attribute *attr,
 			char *buf)
 {
-	return sprintf(buf, "%d\n", foo);
-}
-
-static ssize_t foo_store(struct kobject *kobj, struct kobj_attribute *attr,
-			 const char *buf, size_t count)
-{
-	int ret;
-
-	ret = kstrtoint(buf, 10, &foo);
-	if (ret < 0)
-		return ret;
-
-	return count;
+	return sprintf(buf, "Data size written on memory : %ld\n", buf_size);
 }
 
 static struct kobj_attribute foo_attribute =
-	__ATTR(foo, 0664, foo_show, foo_store);
+	__ATTR_RO(foo);
+
+ssize_t shmem_read(struct file *file, struct kobject *kobj, struct bin_attribute *attr,
+		char *buf, loff_t off, size_t size)
+{
+	if(off > MAX_BUF_SIZE)
+		return -EFAULT;
+/*
+	if(copy_to_user(buf, shmem_buf, size))
+		return -EFAULT;
+*/
+	memcpy(buf, shmem_buf, size);
+	return size;
+}
+
+ssize_t shmem_write(struct file *file, struct kobject *kobj, struct bin_attribute *attr,
+		 char *buf, loff_t off, size_t size)
+{
+/*
+	if(copy_from_user(shmem_buf, buf, size))
+	{
+		printk(KERN_ALERT "Fail copy_from_user!\n");	
+		return -EFAULT;
+	}
+*/
+	memcpy(shmem_buf, buf, size);
+	buf_size = size;
+	return size;
+}
+
+static vm_fault_t shmem_vm_fault(struct vm_fault *vmf)
+{
+	struct page *page = NULL;
+	unsigned long offset = vmf->address - vmf->vma->vm_start;
+	void *ptr = NULL;
+
+	printk(KERN_ALERT "shmem_vm_fault is called\n");
+	if (offset >= MAX_BUF_SIZE)
+		return VM_FAULT_SIGBUS;
+	ptr = shmem_buf + offset;
+	page = vmalloc_to_page(ptr);
+	get_page(page);
+	vmf->page = page;
+	return 0;
+}
+
+static struct vm_operations_struct vma_ops = {
+	.fault = shmem_vm_fault
+};
+
+int shmem_mmap(struct file *file, struct kobject *kobj, struct bin_attribute *attr,
+		struct vm_area_struct *vma)
+{
+	vma->vm_flags |= VM_IO;
+	vma->vm_ops = &vma_ops;
+	printk(KERN_ALERT "vm_start : %08lx, vm_end : %08lx, size : %ld\n",
+		vma->vm_start, vma->vm_end, vma->vm_end-vma->vm_start);
+	return vma->vm_start;
+}
+
+static struct bin_attribute shmem_attribute = {
+	.attr = { .name = "shmem", .mode = 0666 },
+	.size = MAX_BUF_SIZE,
+	.read = shmem_read,
+	.write = shmem_write,
+	.mmap = shmem_mmap,
+}; 
 
 static struct kobject *example_kobj;
 
 static int mymodule_init(void)
 {
-	int ret;
+	int ret = 0;
+
+	shmem_buf = vmalloc(MAX_BUF_SIZE);
+	if (!shmem_buf)
+	{
+		printk(KERN_ALERT "vmalloc is failed!\n");
+		return ret;
+	}
+	memset(shmem_buf, 0, MAX_BUF_SIZE);
 
 	example_kobj = kobject_create_and_add("myfs", kernel_kobj);
 	if (!example_kobj)
 		return -ENOMEM;
 
+	ret = sysfs_create_bin_file(example_kobj, &shmem_attribute);
 	ret = sysfs_create_file(example_kobj, &foo_attribute.attr);
 	if (ret)
 		kobject_put(example_kobj);
@@ -52,7 +117,7 @@ static int mymodule_init(void)
 static void mymodule_exit(void)
 {
 	printk(KERN_ALERT "Bye~\n");
-
+	vfree(shmem_buf);
 	kobject_put(example_kobj);
 }
 
