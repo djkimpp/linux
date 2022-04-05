@@ -7,7 +7,7 @@
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
 
-#define MAX_BUF_SIZE 10485760 // 10MB
+#define MAX_BUF_SIZE (10485760) // 10MB
 
 static char *shmem_buf;
 size_t buf_size;
@@ -26,10 +26,6 @@ ssize_t shmem_read(struct file *file, struct kobject *kobj, struct bin_attribute
 {
 	if(off > MAX_BUF_SIZE)
 		return -EFAULT;
-/*
-	if(copy_to_user(buf, shmem_buf, size))
-		return -EFAULT;
-*/
 	memcpy(buf, shmem_buf, size);
 	return size;
 }
@@ -37,13 +33,6 @@ ssize_t shmem_read(struct file *file, struct kobject *kobj, struct bin_attribute
 ssize_t shmem_write(struct file *file, struct kobject *kobj, struct bin_attribute *attr,
 		 char *buf, loff_t off, size_t size)
 {
-/*
-	if(copy_from_user(shmem_buf, buf, size))
-	{
-		printk(KERN_ALERT "Fail copy_from_user!\n");	
-		return -EFAULT;
-	}
-*/
 	memcpy(shmem_buf, buf, size);
 	buf_size = size;
 	return size;
@@ -52,31 +41,39 @@ ssize_t shmem_write(struct file *file, struct kobject *kobj, struct bin_attribut
 static vm_fault_t shmem_vm_fault(struct vm_fault *vmf)
 {
 	struct page *page = NULL;
-	unsigned long offset = vmf->address - vmf->vma->vm_start;
+	unsigned long offset = 0;
 	void *ptr = NULL;
 
-	printk(KERN_ALERT "shmem_vm_fault is called\n");
-	if (offset >= MAX_BUF_SIZE)
+	if (vmf == NULL)
+	{
 		return VM_FAULT_SIGBUS;
+	}
+	offset = vmf->address - vmf->vma->vm_start;
+	if (offset >= MAX_BUF_SIZE)
+	{
+		return VM_FAULT_SIGBUS;
+	}
 	ptr = shmem_buf + offset;
 	page = vmalloc_to_page(ptr);
-	get_page(page);
-	vmf->page = page;
-	return 0;
+	if(!page)
+		printk("fail vmalloc_to page");
+	return vmf_insert_pfn(vmf->vma, vmf->address, page_to_pfn(page));  
 }
 
 static struct vm_operations_struct vma_ops = {
 	.fault = shmem_vm_fault
 };
 
-int shmem_mmap(struct file *file, struct kobject *kobj, struct bin_attribute *attr,
+static int shmem_mmap(struct file *file, struct kobject *kobj, struct bin_attribute *attr,
 		struct vm_area_struct *vma)
 {
 	vma->vm_flags |= VM_IO;
+	vma->vm_flags |= VM_PFNMAP;
 	vma->vm_ops = &vma_ops;
 	printk(KERN_ALERT "vm_start : %08lx, vm_end : %08lx, size : %ld\n",
 		vma->vm_start, vma->vm_end, vma->vm_end-vma->vm_start);
-	return vma->vm_start;
+
+	return 0;
 }
 
 static struct bin_attribute shmem_attribute = {
