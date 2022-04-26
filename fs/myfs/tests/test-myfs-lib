@@ -1,0 +1,7 @@
+#!/bin/bash
+
+myfs_mnt=/mnt/myfs
+module_dir=${PWD}/..
+module_file="$module_dir"/myfs.ko
+dev=/dev/loop10
+vdev="$module_dir"/tests/tmp.dev.blk
